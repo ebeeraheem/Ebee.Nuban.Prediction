@@ -16,18 +16,11 @@ public static class BankSuggestionService
     /// <summary>
     /// Suggests a list of possible banks that match the provided account number.
     /// </summary>
-    /// <remarks>This method validates the format of the account number and uses bank-specific rules to
-    /// determine potential matches. If the account number is in a phone number format, the method prioritizes fintech
-    /// banks that support such formats. If no matches are found for phone number formats, the method falls back to
-    /// standard validation rules.</remarks>
-    /// <param name="accountNumber">The account number to evaluate. The account number must be exactly 10 digits long and cannot contain spaces or
-    /// hyphens.</param>
-    /// <returns>A list of <see cref="Bank"/> objects representing the banks that are potential matches for the provided account
-    /// number. The list may be filtered based on prioritization rules, such as popularity or specific formats (e.g.,
-    /// phone number-based accounts).</returns>
-    /// <exception cref="ArgumentException">Thrown if <paramref name="accountNumber"/> is null, empty, contains invalid characters, or is not exactly 10
-    /// digits long. Also thrown if the list of banks cannot be retrieved from the data source.</exception>
-    public static List<Bank> SuggestPossibleBanks(string accountNumber)
+    /// <param name="accountNumber">The account number to evaluate.</param>
+    /// <param name="options">Configuration options for bank prediction. If null, default options are used.</param>
+    /// <returns>A list of banks that are potential matches for the provided account number.</returns>
+    /// <exception cref="ArgumentException">Thrown if the account number is invalid or banks cannot be retrieved.</exception>
+    public static List<Bank> SuggestPossibleBanks(string accountNumber, NubanPredictionOptions? options = null)
     {
         if (string.IsNullOrWhiteSpace(accountNumber))
         {
@@ -45,7 +38,8 @@ public static class BankSuggestionService
             throw new ArgumentException("Account number must be exactly 10 digits.", nameof(accountNumber));
         }
 
-        var banks = GetBanks();
+        options ??= BankPrioritizationOptions.DefaultOptions;
+        var banks = GetBanks(null, options);
 
         if (banks is null || banks.Count == 0)
         {
@@ -53,11 +47,11 @@ public static class BankSuggestionService
         }
 
         // Check for phone number format FIRST
-        if (BankPrioritizationOptions.IsPhoneNumberFormat(accountNumber))
+        if (BankPrioritizationOptions.IsPhoneNumberFormat(accountNumber, options))
         {
             // For phone numbers, ONLY suggest the fintech banks that use phone numbers
             var phoneNumberBanks = banks
-                .Where(b => BankPrioritizationOptions.PhoneNumberBankCodes.Contains(b.Code))
+                .Where(b => options.PhoneNumberBankCodes.Contains(b.Code))
                 .ToList();
 
             if (phoneNumberBanks.Count != 0)
@@ -67,7 +61,6 @@ public static class BankSuggestionService
             }
 
             // Fallback: if no phone-number banks found, continue with regular validation
-            // (This handles edge cases where the phone number banks might not be in the list)
         }
 
         var possibleBanks = banks
@@ -75,28 +68,30 @@ public static class BankSuggestionService
             .ToList();
 
         // Apply popularity-based filtering
-        return BankPrioritizationOptions.ApplyBankPriorityFilter(possibleBanks);
+        return BankPrioritizationOptions.ApplyBankPriorityFilter(possibleBanks, options);
     }
 
     /// <summary>
     /// Retrieves a list of banks, optionally filtered by a search term.
     /// </summary>
-    /// <remarks>The method uses a cached list of banks for performance. The cache is initialized on the first
-    /// call and remains in memory for subsequent calls.</remarks>
-    /// <param name="searchTerm">An optional string used to filter the banks by name or code. The search is case-insensitive. If <paramref
-    /// name="searchTerm"/> is <see langword="null"/> or whitespace, all banks are returned.</param>
-    /// <returns>A list of <see cref="Bank"/> objects. If no banks match the search term, an empty list is returned.</returns>
-    public static List<Bank> GetBanks(string? searchTerm = null)
+    /// <param name="searchTerm">Optional search term to filter banks.</param>
+    /// <param name="options">Configuration options containing custom banks. If null, default options are used.</param>
+    /// <returns>A list of Bank objects.</returns>
+    public static List<Bank> GetBanks(string? searchTerm = null, NubanPredictionOptions? options = null)
     {
-        if (_cachedBanks is null)
-        {
-            lock (_lockObject)
-            {
-                _cachedBanks ??= LoadBanksFromResource();
-            }
-        }
+        options ??= BankPrioritizationOptions.DefaultOptions;
 
-        var banks = _cachedBanks;
+        List<Bank> banks;
+
+        // Use custom banks if provided, otherwise use cached/embedded banks
+        if (options.CustomBanks != null && options.CustomBanks.Count > 0)
+        {
+            banks = options.CustomBanks;
+        }
+        else
+        {
+            banks = GetDefaultBanks();
+        }
 
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
@@ -109,14 +104,28 @@ public static class BankSuggestionService
     }
 
     /// <summary>
+    /// Gets the default banks from embedded resource with caching.
+    /// </summary>
+    /// <returns>List of default banks.</returns>
+    private static List<Bank> GetDefaultBanks()
+    {
+        if (_cachedBanks is null)
+        {
+            lock (_lockObject)
+            {
+                _cachedBanks ??= LoadBanksFromResource();
+            }
+        }
+
+        return _cachedBanks;
+    }
+
+    /// <summary>
     /// Loads a list of banks from an embedded JSON resource.
     /// </summary>
-    /// <remarks>This method retrieves the JSON resource embedded in the assembly, deserializes its content
-    /// into a list of <see cref="Bank"/> objects, and returns the result. The resource must be named
-    /// "Ebee.Nuban.Prediction.banks.json" and must be accessible at runtime.</remarks>
-    /// <returns>A list of <see cref="Bank"/> objects deserialized from the embedded JSON resource.</returns>
-    /// <exception cref="FileNotFoundException">Thrown if the JSON resource "Ebee.Nuban.Prediction.banks.json" is not found in the assembly.</exception>
-    /// <exception cref="JsonException">Thrown if the JSON resource content cannot be deserialized into a list of <see cref="Bank"/> objects.</exception>
+    /// <returns>A list of Bank objects deserialized from the embedded JSON resource.</returns>
+    /// <exception cref="FileNotFoundException">Thrown if the JSON resource is not found.</exception>
+    /// <exception cref="JsonException">Thrown if the JSON content cannot be deserialized.</exception>
     private static List<Bank> LoadBanksFromResource()
     {
         using var stream = Assembly.GetExecutingAssembly()
@@ -125,7 +134,7 @@ public static class BankSuggestionService
 
         using var reader = new StreamReader(stream);
         var jsonContent = reader.ReadToEnd();
-        
+
         return JsonSerializer.Deserialize<List<Bank>>(jsonContent, _jsonOptions) ??
             throw new JsonException("Failed to deserialize banks from JSON resource.");
     }

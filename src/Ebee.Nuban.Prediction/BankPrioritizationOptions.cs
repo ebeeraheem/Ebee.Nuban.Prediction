@@ -1,94 +1,57 @@
 ﻿namespace Ebee.Nuban.Prediction;
 
+/// <summary>
+/// Provides options and utilities for prioritizing and filtering banks based on predefined tiers, validating phone
+/// number formats, and managing bank-related configurations.
+/// </summary>
 public static class BankPrioritizationOptions
 {
     /// <summary>
-    /// Filters and prioritizes a list of banks based on predefined tiers, returning a maximum of six banks.
+    /// Default configuration options for NUBAN prediction.
     /// </summary>
-    /// <remarks>Banks are categorized into three groups: Tier 1, Tier 2, and others. The method ensures that
-    /// Tier 1 banks are prioritized, followed by Tier 2 banks, and finally other banks if necessary to meet the minimum
-    /// count of three suggestions. The total number of banks returned will not exceed six.</remarks>
+    public static NubanPredictionOptions DefaultOptions { get; } = new();
+
+    /// <summary>
+    /// Filters and prioritizes a list of banks based on the provided options.
+    /// </summary>
     /// <param name="banks">The list of banks to filter and prioritize.</param>
-    /// <returns>A list of up to six banks, prioritized by tier: Tier 1 banks are included first (up to four), followed by Tier 2
-    /// banks (up to two), and then other banks if fewer than three total banks are selected from Tier 1 and Tier 2.</returns>
-    public static List<Bank> ApplyBankPriorityFilter(List<Bank> banks)
+    /// <param name="options">Configuration options for prioritization. If null, default options are used.</param>
+    /// <returns>A list of banks prioritized according to the specified options.</returns>
+    public static List<Bank> ApplyBankPriorityFilter(List<Bank> banks, NubanPredictionOptions? options = null)
     {
-        var tier1Results = banks.Where(b => Tier1BankCodes.Contains(b.Code)).ToList();
-        var tier2Results = banks.Where(b => Tier2BankCodes.Contains(b.Code)).ToList();
+        options ??= DefaultOptions;
+
+        var tier1Results = banks.Where(b => options.Tier1BankCodes.Contains(b.Code)).ToList();
+        var tier2Results = banks.Where(b => options.Tier2BankCodes.Contains(b.Code)).ToList();
         var otherResults = banks.Where(b =>
-                !Tier1BankCodes.Contains(b.Code) &&
-                !Tier2BankCodes.Contains(b.Code))
+                !options.Tier1BankCodes.Contains(b.Code) &&
+                !options.Tier2BankCodes.Contains(b.Code))
             .ToList();
 
-        // Return maximum 6 suggestions: Tier 1 first, then Tier 2, then others
         var result = new List<Bank>();
-        result.AddRange(tier1Results.Take(4));
-        result.AddRange(tier2Results.Take(2));
+        result.AddRange(tier1Results.Take(options.MaxTier1Results));
+        result.AddRange(tier2Results.Take(options.MaxTier2Results));
 
-        // Only add others if we have less than 3 total suggestions
-        if (result.Count < 3)
+        // Only add others if we have less than minimum suggestions
+        if (result.Count < options.MinimumSuggestions)
         {
-            result.AddRange(otherResults.Take(3 - result.Count));
+            result.AddRange(otherResults.Take(options.MinimumSuggestions - result.Count));
         }
 
-        return result;
+        // Ensure we don't exceed maximum suggestions
+        return [.. result.Take(options.MaximumSuggestions)];
     }
 
-    public static HashSet<string> PhoneNumberBankCodes { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// Determines if the account number is in phone number format.
+    /// </summary>
+    /// <param name="accountNumber">The account number to check.</param>
+    /// <param name="options">Configuration options containing valid phone prefixes. If null, default options are used.</param>
+    /// <returns>True if the account number matches a phone number format.</returns>
+    public static bool IsPhoneNumberFormat(string accountNumber, NubanPredictionOptions? options = null)
     {
-        "999992", // Opay
-        "50515",  // Moniepoint
-        "999991", // Palmpay
-        "214", // FCMB
-        "232"  // Sterling Bank
-    };
+        options ??= DefaultOptions;
 
-    public static HashSet<string> Tier1BankCodes { get; set; } = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "011", // First Bank of Nigeria
-        "044", // Access Bank  
-        "50211", // Kuda Bank
-        "057", // Zenith Bank
-        "058", // GTBank
-        "50515",  // Moniepoint
-        "070", // Fidelity Bank
-        "033", // United Bank for Africa
-        "214", // FCMB
-        "232", // Sterling Bank
-        "035"  // Wema Bank
-    };
-
-    public static HashSet<string> Tier2BankCodes { get; set; } = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "050", // Ecobank
-        "215", // Unity Bank
-        "082", // Keystone Bank
-        "032", // Union Bank
-        "076", // Polaris Bank
-        "221", // Stanbic IBTC
-        "068", // Standard Chartered
-        "023", // Citibank
-        "301", // Jaiz Bank
-        "101", // Providus Bank
-        "100", // Suntrust Bank
-        "302", // TAJ Bank
-        "303"  // Lotus Bank
-    };
-
-    public static HashSet<string> ValidPhonePrefixes { get; set; } =
-    [
-        // MTN
-        "703", "706", "803", "806", "810", "813", "814", "816", "903", "906", "913", "916",
-        // Airtel
-        "701", "708", "802", "808", "812", "901", "902", "904", "907", "911", "912",
-        // Glo
-        "705", "805", "807", "811", "815", "905", "915",
-        // 9mobile
-        "809", "817", "818", "908", "909"
-    ];
-
-    public static bool IsPhoneNumberFormat(string accountNumber)
-    {
         // Remove any spaces or hyphens
         accountNumber = accountNumber
             .Replace(" ", "")
@@ -100,6 +63,6 @@ public static class BankPrioritizationOptions
         }
 
         string prefix = accountNumber[..3];
-        return ValidPhonePrefixes.Contains(prefix);
+        return options.ValidPhonePrefixes.Contains(prefix);
     }
 }
