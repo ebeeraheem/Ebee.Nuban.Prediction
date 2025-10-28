@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Reflection;
+using System.Text.Json;
 
 namespace Ebee.Nuban.Prediction;
 
@@ -9,21 +10,24 @@ public static class BankSuggestionService
         PropertyNameCaseInsensitive = true
     };
 
+    private static List<Bank>? _cachedBanks;
+    private static readonly object _lockObject = new();
+
     /// <summary>
     /// Suggests a list of possible banks that match the provided account number.
     /// </summary>
-    /// <remarks>This method validates the account number format and uses it to filter banks based on their 
-    /// compatibility with the provided account number. If the account number resembles a phone number,  the method
-    /// prioritizes fintech banks that support phone number formats. The final list of banks  is further refined based
-    /// on popularity-based filtering.</remarks>
-    /// <param name="accountNumber">The account number to validate and use for suggesting banks. The account number must be exactly  10 digits long
-    /// and cannot contain spaces or hyphens.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains a list of banks  that are potential
-    /// matches for the provided account number. If the account number is in a phone  number format, the result may
-    /// prioritize fintech banks that support such formats.</returns>
-    /// <exception cref="ArgumentException">Thrown if <paramref name="accountNumber"/> is null, empty, not exactly 10 digits, or if banks  cannot be
-    /// retrieved from the data source.</exception>
-    public static async Task<List<Bank>> SuggestPossibleBanksAsync(string accountNumber)
+    /// <remarks>This method validates the format of the account number and uses bank-specific rules to
+    /// determine potential matches. If the account number is in a phone number format, the method prioritizes fintech
+    /// banks that support such formats. If no matches are found for phone number formats, the method falls back to
+    /// standard validation rules.</remarks>
+    /// <param name="accountNumber">The account number to evaluate. The account number must be exactly 10 digits long and cannot contain spaces or
+    /// hyphens.</param>
+    /// <returns>A list of <see cref="Bank"/> objects representing the banks that are potential matches for the provided account
+    /// number. The list may be filtered based on prioritization rules, such as popularity or specific formats (e.g.,
+    /// phone number-based accounts).</returns>
+    /// <exception cref="ArgumentException">Thrown if <paramref name="accountNumber"/> is null, empty, contains invalid characters, or is not exactly 10
+    /// digits long. Also thrown if the list of banks cannot be retrieved from the data source.</exception>
+    public static List<Bank> SuggestPossibleBanks(string accountNumber)
     {
         if (string.IsNullOrWhiteSpace(accountNumber))
         {
@@ -31,7 +35,9 @@ public static class BankSuggestionService
         }
 
         // Remove any spaces or hyphens
-        accountNumber = accountNumber.Replace(" ", "").Replace("-", "");
+        accountNumber = accountNumber
+            .Replace(" ", "")
+            .Replace("-", "");
 
         // Validate account number is exactly 10 digits
         if (accountNumber.Length != 10 || !accountNumber.All(char.IsDigit))
@@ -39,7 +45,7 @@ public static class BankSuggestionService
             throw new ArgumentException("Account number must be exactly 10 digits.", nameof(accountNumber));
         }
 
-        var banks = await GetBanksAsync();
+        var banks = GetBanks();
 
         if (banks is null || banks.Count == 0)
         {
@@ -72,20 +78,26 @@ public static class BankSuggestionService
         return BankPrioritizationOptions.ApplyBankPriorityFilter(possibleBanks);
     }
 
-    public static async Task<List<Bank>> GetBanksAsync(string? searchTerm = null)
+    /// <summary>
+    /// Retrieves a list of banks, optionally filtered by a search term.
+    /// </summary>
+    /// <remarks>The method uses a cached list of banks for performance. The cache is initialized on the first
+    /// call and remains in memory for subsequent calls.</remarks>
+    /// <param name="searchTerm">An optional string used to filter the banks by name or code. The search is case-insensitive. If <paramref
+    /// name="searchTerm"/> is <see langword="null"/> or whitespace, all banks are returned.</param>
+    /// <returns>A list of <see cref="Bank"/> objects. If no banks match the search term, an empty list is returned.</returns>
+    public static List<Bank> GetBanks(string? searchTerm = null)
     {
-        var resourcePath = Path.Combine(
-            AppContext.BaseDirectory, "banks.json");
-
-        if (!File.Exists(resourcePath))
+        if (_cachedBanks is null)
         {
-            throw new FileNotFoundException("Banks JSON file not found.", resourcePath);
+            lock (_lockObject)
+            {
+                _cachedBanks ??= LoadBanksFromResource();
+            }
         }
 
-        var jsonContent = await File.ReadAllTextAsync(resourcePath);
-        var banks = JsonSerializer.Deserialize<List<Bank>>(jsonContent, _jsonOptions) ??
-            throw new JsonException("Failed to deserialize banks from JSON file.");
-        
+        var banks = _cachedBanks;
+
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             banks = [.. banks.Where(b =>
@@ -94,6 +106,28 @@ public static class BankSuggestionService
         }
 
         return banks;
+    }
+
+    /// <summary>
+    /// Loads a list of banks from an embedded JSON resource.
+    /// </summary>
+    /// <remarks>This method retrieves the JSON resource embedded in the assembly, deserializes its content
+    /// into a list of <see cref="Bank"/> objects, and returns the result. The resource must be named
+    /// "Ebee.Nuban.Prediction.banks.json" and must be accessible at runtime.</remarks>
+    /// <returns>A list of <see cref="Bank"/> objects deserialized from the embedded JSON resource.</returns>
+    /// <exception cref="FileNotFoundException">Thrown if the JSON resource "Ebee.Nuban.Prediction.banks.json" is not found in the assembly.</exception>
+    /// <exception cref="JsonException">Thrown if the JSON resource content cannot be deserialized into a list of <see cref="Bank"/> objects.</exception>
+    private static List<Bank> LoadBanksFromResource()
+    {
+        using var stream = Assembly.GetExecutingAssembly()
+            .GetManifestResourceStream("Ebee.Nuban.Prediction.banks.json") ??
+            throw new FileNotFoundException("Banks JSON resource not found.");
+
+        using var reader = new StreamReader(stream);
+        var jsonContent = reader.ReadToEnd();
+        
+        return JsonSerializer.Deserialize<List<Bank>>(jsonContent, _jsonOptions) ??
+            throw new JsonException("Failed to deserialize banks from JSON resource.");
     }
 
     /// <summary>
@@ -146,22 +180,11 @@ public static class BankSuggestionService
             return false;
         }
 
-        // Extract the 9-digit serial number from the account number
         string serialNumber = accountNumber[..9];
-
-        // Extract the check digit from the account number
         int providedCheckDigit = accountNumber[9] - '0';
-
-        // Calculate the expected check digit
         int? calculatedCheckDigit = CalculateNubanCheckDigit(sixDigitBankCode, serialNumber);
 
-        // Handle invalid check digit
-        if (calculatedCheckDigit is null)
-        {
-            return false;
-        }
-
-        return providedCheckDigit == calculatedCheckDigit;
+        return calculatedCheckDigit.HasValue && providedCheckDigit == calculatedCheckDigit;
     }
 
     /// <summary>

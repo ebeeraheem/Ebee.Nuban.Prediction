@@ -1,12 +1,15 @@
-﻿using System.Text.Json.Serialization;
+﻿namespace Ebee.Nuban.Prediction;
 
-namespace Ebee.Nuban.Prediction;
-
-public class Bank
+public class Bank(string name, string code)
 {
-    public string Name { get; set; } = string.Empty;
-    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = name;
+    public string Code { get; set; } = code;
 
-    [JsonPropertyName("long_code")]
-    public string LongCode { get; set; } = string.Empty;
+    public override string ToString() => $"{Name} ({Code})";
+
+    public override bool Equals(object? obj) =>
+        obj is Bank other &&
+        string.Equals(Code, other.Code, StringComparison.OrdinalIgnoreCase);
+
+    public override int GetHashCode() => Code.GetHashCode(StringComparison.OrdinalIgnoreCase);
 }
