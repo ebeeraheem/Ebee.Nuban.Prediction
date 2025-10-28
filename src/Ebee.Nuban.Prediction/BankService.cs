@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Ebee.Nuban.Prediction;
 
-public static class BankSuggestionService
+public static class BankService
 {
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
