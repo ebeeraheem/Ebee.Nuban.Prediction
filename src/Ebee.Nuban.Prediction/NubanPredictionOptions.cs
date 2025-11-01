@@ -56,8 +56,6 @@ public class NubanPredictionOptions
         "999992", // Opay
         "50515",  // Moniepoint
         "999991", // Palmpay
-        "214", // FCMB
-        "232"  // Sterling Bank
     };
 
     /// <summary>
