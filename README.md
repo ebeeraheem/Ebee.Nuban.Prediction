@@ -31,7 +31,7 @@ dotnet add package Ebee.Nuban.Prediction
 
 ### PackageReference
 ```xml
-<PackageReference Include="Ebee.Nuban.Prediction" Version="1.0.0" />
+<PackageReference Include="Ebee.Nuban.Prediction" Version="1.0.1" />
 ```
 
 ## Quick Start
@@ -153,8 +153,6 @@ The library categorizes banks into tiers for intelligent prioritization:
 - OPay (999992)
 - Moniepoint (50515)
 - PalmPay (999991)
-- FCMB (214)
-- Sterling Bank (232)
 
 ## Configuration Options
 
@@ -191,7 +189,7 @@ var customOptions = new NubanPredictionOptions
     // Custom phone prefixes
     ValidPhonePrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "080", "081", "070" // Custom phone prefixes
+        "803", "814", "703" // Custom phone prefixes
     }
 };
 ```
@@ -363,7 +361,12 @@ If you encounter any issues or have questions, please:
 
 ## Changelog
 
-### Version 1.0.0
+### [1.0.1] - 2025-11-01
+- Fixed bug in phone number prefix validation
+- Removed duplicate Wema Bank entry
+- Add new BAIGE MFB to the bank database
+
+### [1.0.0] - 2025-10-28
 - Initial release
 - NUBAN validation algorithm implementation
 - Bank suggestion service
